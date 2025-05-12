@@ -1,3 +1,8 @@
+pub mod validator;
+pub mod subnet;
+pub mod reward;
+pub mod threshold_signature;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

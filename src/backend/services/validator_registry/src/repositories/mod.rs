@@ -1,3 +1,10 @@
+pub mod traits;
+pub mod postgres;
+
+// Re-export for convenience
+pub use traits::*;
+pub use postgres::*;
+
 use async_trait::async_trait;
 use anyhow::Result;
 
