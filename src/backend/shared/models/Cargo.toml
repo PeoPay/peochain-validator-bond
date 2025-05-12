@@ -1,0 +1,9 @@
+[package]
+name = "peochain_models"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+uuid = { version = "1.3", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
