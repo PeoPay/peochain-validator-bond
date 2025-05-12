@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    # Backend services
+    'src/backend/services/validator_registry',
+    'src/backend/services/bond_management',
+    'src/backend/services/performance_monitoring',
+    'src/backend/services/reward_distribution',
+    'src/backend/services/network_management',
+    
+    # Shared libraries
+    'src/backend/shared/models',
+    'src/backend/shared/utils',
+    
+    # Smart contracts
+    'src/contracts/validator_bond',
+    'src/contracts/threshold_signatures'
+]
+
+[workspace.dependencies]
+# Global dependency versions and configurations
+tokio = { version = '1.28.0', features = ['full'] }
+serde = { version = '1.0', features = ['derive'] }
+tracing = '0.1'
+anyhow = '1.0'
+thiserror = '1.0'
+
+[workspace.metadata.release]
+dependent-version = 'upgrade'
