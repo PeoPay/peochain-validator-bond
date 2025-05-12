@@ -1,0 +1,15 @@
+{
+    "files.exclude": {
+        "**/target": true,
+        "**/node_modules": true,
+        "**/.next": true
+    },
+    "rust-analyzer.cargo.features": "all",
+    "rust-analyzer.check.command": "clippy",
+    "editor.formatOnSave": true,
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "eslint.validate": ["javascript", "typescript", "typescriptreact"],
+    "files.associations": {
+        "*.rs": "rust"
+    }
+}
