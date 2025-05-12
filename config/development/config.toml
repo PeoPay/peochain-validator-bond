@@ -1,0 +1,11 @@
+[network]
+name = 'peochain-testnet'
+chain_id = 'peochain-v1-dev'
+
+[validator]
+min_bond_amount = 500  # PEO tokens
+unbonding_period = 14  # days
+
+[performance]
+epoch_length = 3600  # blocks
+base_reward = 100  # PEO
