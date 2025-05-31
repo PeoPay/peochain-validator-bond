@@ -22,6 +22,119 @@ use blake2::{Blake2b512, Digest};
 use merlin::Transcript;
 use rand::Rng;
 use std::ops::Neg;
+use std::sync::Arc;
+use std::mem;
+use std::time::Instant;
+use parking_lot::Mutex;
+use lazy_static::lazy_static;
+
+// Memory pool for frequently used vectors
+struct VectorPool<T> {
+    pool: Mutex<Vec<Vec<T>>>,
+    capacity: usize,
+}
+
+impl<T> VectorPool<T> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            pool: Mutex::new(Vec::with_capacity(capacity)),
+            capacity,
+        }
+    }
+
+    fn get(&self, capacity: usize) -> Vec<T> {
+        let mut pool = self.pool.lock();
+        if let Some(mut vec) = pool.pop() {
+            vec.clear();
+            vec.reserve(capacity);
+            vec
+        } else {
+            Vec::with_capacity(capacity)
+        }
+    }
+
+    fn put(&self, mut vec: Vec<T>) {
+        let mut pool = self.pool.lock();
+        if pool.len() < self.capacity {
+            vec.clear();
+            pool.push(vec);
+        }
+        // else: drop the vector
+    }
+}
+
+lazy_static! {
+    // Pools for different vector types
+    static ref FR_VEC_POOL: VectorPool<Fr> = VectorPool::new(16);
+    static ref USIZE_VEC_POOL: VectorPool<usize> = VectorPool::new(16);
+    static ref G2_PROJECTIVE_VEC_POOL: VectorPool<G2Projective> = VectorPool::new(8);
+}
+
+// Memory usage profiling macro
+#[cfg(debug_assertions)]
+macro_rules! profile_memory {
+    ($label:expr, $code:expr) => {{
+        use std::alloc::{GlobalAlloc, System, Layout};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        
+        struct TrackingAllocator;
+        
+        unsafe impl GlobalAlloc for TrackingAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                let ret = System.alloc(layout);
+                if !ret.is_null() {
+                    ALLOCATED_BYTES.fetch_add(layout.size(), Ordering::SeqCst);
+                }
+                ret
+            }
+
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                System.dealloc(ptr, layout);
+                ALLOCATED_BYTES.fetch_sub(layout.size(), Ordering::SeqCst);
+            }
+        }
+        
+        #[global_allocator]
+        static GLOBAL: TrackingAllocator = TrackingAllocator;
+        static ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
+        
+        let before = ALLOCATED_BYTES.load(Ordering::SeqCst);
+        let start = Instant::now();
+        let result = $code;
+        let elapsed = start.elapsed();
+        let after = ALLOCATED_BYTES.load(Ordering::SeqCst);
+        let diff = after.saturating_sub(before);
+        
+        if diff > 1024 * 1024 { // Only log if more than 1MB allocated
+            log::debug!(
+                "[MEMORY] {}: {}ms, Δ{}MB",
+                $label,
+                elapsed.as_millis(),
+                diff / (1024 * 1024)
+            );
+        } else if diff > 0 {
+            log::debug!(
+                "[MEMORY] {}: {}ms, Δ{}B",
+                $label,
+                elapsed.as_millis(),
+                diff
+            );
+        } else {
+            log::debug!(
+                "[PERF] {}: {}ms",
+                $label,
+                elapsed.as_millis()
+            );
+        }
+        
+        result
+    }};
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! profile_memory {
+    ($label:expr, $code:expr) => { $code };
+}
 
 /// Error type for threshold crypto operations
 #[derive(Debug, thiserror::Error)]
@@ -131,24 +244,45 @@ pub struct SignatureShare {
     pub index: usize,
     /// Signature share data (G2 point)
     pub share: G2Affine,
+    /// Cached serialized form to avoid repeated serialization
+    cached_bytes: Option<Vec<u8>>,
 }
 
 impl SignatureShare {
-    /// Serialize the signature share to bytes
-    pub fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        self.share.serialize_compressed(&mut bytes)?;
-        Ok(bytes)
+    /// Create a new signature share
+    pub fn new(index: usize, share: G2Affine) -> Self {
+        Self {
+            index,
+            share,
+            cached_bytes: None,
+        }
     }
     
-    /// Deserialize signature share from bytes
+    /// Serialize the signature share to bytes with caching
+    pub fn to_bytes(&mut self) -> Result<&[u8]> {
+        if self.cached_bytes.is_none() {
+            let mut bytes = Vec::with_capacity(96); // Pre-allocate exact size for G2 point
+            self.share.serialize_compressed(&mut bytes)?;
+            self.cached_bytes = Some(bytes);
+        }
+        Ok(self.cached_bytes.as_ref().unwrap())
+    }
+    
+    /// Deserialize signature share from bytes without copying
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let share = G2Affine::deserialize_compressed(&mut std::io::Cursor::new(bytes))
             .map_err(|e| ThresholdCryptoError::DeserializationError(e.to_string()))?;
+        
         Ok(Self {
             index: 0, // Must be set by the caller
             share,
+            cached_bytes: Some(bytes.to_vec()),
         })
+    }
+    
+    /// Get a reference to the cached bytes if available
+    pub fn get_cached_bytes(&self) -> Option<&[u8]> {
+        self.cached_bytes.as_deref()
     }
 }
 
@@ -218,17 +352,16 @@ impl ThresholdCrypto {
     /// * `key_share` - Participant's key share
     /// 
     /// # Returns
-    /// * `Result<SignatureShare>` - Signature share
+    /// Create a signature share using a participant's key share
     pub fn create_signature_share(message: &[u8], key_share: &KeyShare) -> Result<SignatureShare> {
-        // Hash the message to a point on G2
-        let msg_point = Self::hash_to_g2(message);
-        
-        // Sign the message with the secret share
-        let signature_share = msg_point.mul_bigint(key_share.secret_share.into_bigint());
-        
-        Ok(SignatureShare {
-            index: key_share.index,
-            share: signature_share.into_affine(),
+        profile_memory!("create_signature_share", {
+            let hash = Self::hash_to_g2(message);
+            let signature_share = hash * key_share.secret_share;
+            
+            Ok(SignatureShare::new(
+                key_share.index,
+                signature_share.into_affine(),
+            ))
         })
     }
     
@@ -246,32 +379,53 @@ impl ThresholdCrypto {
         message: &[u8],
         shares: &[SignatureShare],
     ) -> Result<Vec<u8>> {
-        if shares.is_empty() {
-            return Err(ThresholdCryptoError::InsufficientShares.into());
-        }
-        
-        // Collect indices for Lagrange coefficients
-        let indices: Vec<usize> = shares.iter().map(|s| s.index).collect();
-        
-        // Compute Lagrange coefficients
-        let coefficients = Self::lagrange_coefficients(&indices)?;
-        
-        // Aggregate the signature shares
-        let mut aggregated_signature = G2Projective::zero();
-        
-        for (i, share) in shares.iter().enumerate() {
-            let coeff = coefficients[i];
-            let sig_share = G2Projective::from(share.share);
-            aggregated_signature += sig_share.mul_bigint(coeff.into_bigint());
-        }
-        
-        // Serialize the aggregated signature
-        let mut signature_bytes = Vec::new();
-        aggregated_signature
-            .into_affine()
-            .serialize_compressed(&mut signature_bytes)?;
+        profile_memory!("aggregate_signature_shares", {
+            if shares.is_empty() {
+                return Err(ThresholdCryptoError::InsufficientShares.into());
+            }
             
-        Ok(signature_bytes)
+            // Get a pre-allocated vector for indices
+            let mut indices = USIZE_VEC_POOL.get(shares.len());
+            indices.extend(shares.iter().map(|s| s.index));
+            
+            // Compute Lagrange coefficients
+            let coefficients = Self::lagrange_coefficients(&indices)?;
+            
+            // Return indices to the pool
+            USIZE_VEC_POOL.put(indices);
+            
+            // Get a pre-allocated vector for signature shares
+            let mut signature_shares = G2_PROJECTIVE_VEC_POOL.get(shares.len());
+            
+            // First pass: convert all shares to projective form
+            signature_shares.extend(shares.iter().map(|s| G2Projective::from(s.share)));
+            
+            // Second pass: aggregate using multi-scalar multiplication (MSM) for better performance
+            let aggregated_signature = if let Some(msm_result) = G2Projective::msm(
+                &signature_shares,
+                &coefficients,
+            ) {
+                msm_result
+            } else {
+                // Fallback to naive aggregation if MSM fails
+                let mut result = G2Projective::zero();
+                for (share, &coeff) in signature_shares.iter().zip(coefficients.iter()) {
+                    result += share.mul_bigint(coeff.into_bigint());
+                }
+                result
+            };
+            
+            // Return signature shares to the pool
+            G2_PROJECTIVE_VEC_POOL.put(signature_shares);
+            
+            // Pre-allocate exact capacity for the serialized signature
+            let mut signature_bytes = Vec::with_capacity(96); // BLS12-381 G2 point size
+            aggregated_signature
+                .into_affine()
+                .serialize_compressed(&mut signature_bytes)?;
+                
+            Ok(signature_bytes)
+        })
     }
     
     /// Verify a threshold signature
@@ -383,38 +537,51 @@ impl ThresholdCrypto {
     
     /// Compute Lagrange coefficients for a set of indices
     fn lagrange_coefficients(indices: &[usize]) -> Result<Vec<Fr>> {
-        if indices.is_empty() {
-            return Err(ThresholdCryptoError::InsufficientShares.into());
-        }
-        
-        let x_coords: Vec<Fr> = indices
-            .iter()
-            .map(|&i| Fr::from(i as u64))
-            .collect();
+        profile_memory!("lagrange_coefficients", {
+            if indices.is_empty() {
+                return Err(ThresholdCryptoError::InsufficientShares.into());
+            }
             
-        let mut coefficients = Vec::with_capacity(indices.len());
-        
-        for (i, x_i) in x_coords.iter().enumerate() {
-            let mut numerator = Fr::one();
-            let mut denominator = Fr::one();
+            // Get a pre-allocated vector from the pool
+            let mut x_coords = FR_VEC_POOL.get(indices.len());
+            x_coords.extend(indices.iter().map(|&i| Fr::from(i as u64)));
             
-            for (j, x_j) in x_coords.iter().enumerate() {
-                if i == j {
-                    continue;
+            // Get a pre-allocated vector for coefficients
+            let mut coefficients = FR_VEC_POOL.get(indices.len());
+            coefficients.resize(indices.len(), Fr::zero());
+            
+            let len = x_coords.len();
+            
+            for i in 0..len {
+                let x_i = &x_coords[i];
+                let mut numerator = Fr::one();
+                let mut denominator = Fr::one();
+                
+                for j in 0..len {
+                    if i == j {
+                        continue;
+                    }
+                    
+                    let x_j = &x_coords[j];
+                    numerator *= x_j;
+                    denominator *= x_j - x_i;
                 }
                 
-                numerator *= x_j;
-                denominator *= x_j - x_i;
+                if denominator.is_zero() {
+                    // Return the vectors to the pool before returning
+                    FR_VEC_POOL.put(x_coords);
+                    FR_VEC_POOL.put(coefficients);
+                    return Err(ThresholdCryptoError::InvalidShareIndex.into());
+                }
+                
+                coefficients[i] = numerator * denominator.inverse().unwrap();
             }
             
-            if denominator.is_zero() {
-                return Err(ThresholdCryptoError::InvalidShareIndex.into());
-            }
+            // Return x_coords to the pool
+            FR_VEC_POOL.put(x_coords);
             
-            coefficients.push(numerator * denominator.inverse().unwrap());
-        }
-        
-        Ok(coefficients)
+            Ok(coefficients)
+        })
     }
 }
 
