@@ -91,6 +91,11 @@ fn bond_validator_works() {
         
         let validators_in_subnet = ValidatorBond::validators_by_subnet((subnet_id, current_epoch));
         assert!(validators_in_subnet.contains(&validator_id));
+
+        // Verify current assignment storage
+        assert_eq!(ValidatorBond::current_assignment(validator_id), Some(subnet_id));
+        let current_list = ValidatorBond::current_validators(subnet_id);
+        assert!(current_list.contains(&validator_id));
     });
 }
 
@@ -207,10 +212,13 @@ fn unbond_works_after_timelock() {
             Origin::signed(controller.public()),
             validator_id
         ));
-        
+
         // Check that the validator was removed
         assert!(ValidatorBond::validator(validator_id).is_none());
-        
+
+        // Current assignment should be cleared
+        assert!(ValidatorBond::current_assignment(validator_id).is_none());
+
         // Check that the validator count was decremented
         assert_eq!(ValidatorBond::validator_count(), 0);
     });
@@ -258,6 +266,7 @@ fn unbond_fails_before_timelock() {
 fn rotate_subnet_works() {
     new_test_ext().execute_with(|| {
         // Register multiple validators
+        let mut ids = Vec::new();
         for _ in 0..5 {
             let public_key = random_public_key();
             let controller = sr25519::Pair::generate().0;
@@ -275,6 +284,8 @@ fn rotate_subnet_works() {
                 public_key,
                 proof
             ));
+
+            ids.push(ValidatorId(sp_io::hashing::blake2_256(&public_key)));
         }
         
         // Check validator count
@@ -297,9 +308,14 @@ fn rotate_subnet_works() {
             let validators = ValidatorBond::validators_by_subnet((subnet_id, rotation_epoch));
             total_assigned += validators.len();
         }
-        
+
         // All validators should be assigned
         assert_eq!(total_assigned, 5);
+
+        // Current assignment should be stored
+        for id in ids {
+            assert!(ValidatorBond::current_assignment(id).is_some());
+        }
     });
 }
 

@@ -163,6 +163,12 @@ decl_storage! {
         
         /// Validators by subnet.
         ValidatorsBySubnet get(fn validators_by_subnet): map hasher(blake2_128_concat) (SubnetId, EpochNumber) => Vec<ValidatorId>;
+
+        /// Current subnet assignment for each validator.
+        CurrentAssignments get(fn current_assignment): map hasher(blake2_128_concat) ValidatorId => Option<SubnetId>;
+
+        /// Validators currently in each subnet (no epoch).
+        CurrentValidatorsBySubnet get(fn current_validators): map hasher(blake2_128_concat) SubnetId => Vec<ValidatorId>;
     }
 }
 
@@ -377,6 +383,16 @@ decl_module! {
             
             // Remove validator
             Validators::<T>::remove(validator_id);
+
+            // Remove current assignment
+            if let Some(subnet) = Self::current_assignment(validator_id) {
+                let mut current = Self::current_validators(subnet);
+                if let Some(pos) = current.iter().position(|v| *v == validator_id) {
+                    current.swap_remove(pos);
+                    CurrentValidatorsBySubnet::insert(subnet, current);
+                }
+                CurrentAssignments::remove(validator_id);
+            }
             
             // Decrement validator count
             let new_count = Self::validator_count().saturating_sub(1);
@@ -512,22 +528,28 @@ impl<T: Config> Module<T> {
         validator_id: ValidatorId,
     ) -> DispatchResult {
         let mut validators = Self::validators_by_subnet((subnet_id, epoch));
-        
+
         // Ensure subnet is not at capacity
         ensure!(
             validators.len() < T::MaxValidatorsPerSubnet::get() as usize,
             Error::<T>::SubnetAtCapacity
         );
-        
+
         // Add validator to subnet
         validators.push(validator_id);
         ValidatorsBySubnet::insert((subnet_id, epoch), validators);
-        
+
         // Update subnet assignments
         let mut assignments = Self::subnet_assignments((subnet_id, epoch));
         assignments.push(validator_id);
         SubnetAssignments::insert((subnet_id, epoch), assignments);
-        
+
+        // Update current assignments
+        let mut current = Self::current_validators(subnet_id);
+        current.push(validator_id);
+        CurrentValidatorsBySubnet::insert(subnet_id, current);
+        CurrentAssignments::insert(validator_id, subnet_id);
+
         Ok(())
     }
     
@@ -537,29 +559,35 @@ impl<T: Config> Module<T> {
         let validators: Vec<_> = Validators::<T>::iter()
             .map(|(id, _)| id)
             .collect();
-        
-        // Clear previous subnet assignments
-        for subnet_index in 0..T::SubnetCount::get() {
-            let subnet_id = SubnetId(subnet_index);
-            ValidatorsBySubnet::remove((subnet_id, new_epoch.saturating_sub(1)));
-            SubnetAssignments::remove((subnet_id, new_epoch.saturating_sub(1)));
-        }
-        
-        // Assign validators to subnets deterministically
+
+        // Assign validators to subnets deterministically and update only changes
         for validator_id in validators {
             let subnet_id = Self::assign_validator_to_subnet(&validator_id, new_epoch);
-            
-            // Add validator to subnet
-            let mut validators = Self::validators_by_subnet((subnet_id, new_epoch));
-            validators.push(validator_id);
-            ValidatorsBySubnet::insert((subnet_id, new_epoch), validators);
-            
-            // Update subnet assignments
+            let current = Self::current_assignment(validator_id);
+
+            if current != Some(subnet_id) {
+                if let Some(old) = current {
+                    let mut old_list = Self::current_validators(old);
+                    if let Some(pos) = old_list.iter().position(|v| *v == validator_id) {
+                        old_list.swap_remove(pos);
+                        CurrentValidatorsBySubnet::insert(old, old_list);
+                    }
+                }
+
+                let mut list = Self::current_validators(subnet_id);
+                list.push(validator_id);
+                CurrentValidatorsBySubnet::insert(subnet_id, list);
+                CurrentAssignments::insert(validator_id, subnet_id);
+            }
+
+            // Historical assignments per epoch
+            let mut validators_epoch = Self::validators_by_subnet((subnet_id, new_epoch));
+            validators_epoch.push(validator_id);
+            ValidatorsBySubnet::insert((subnet_id, new_epoch), validators_epoch);
             let mut assignments = Self::subnet_assignments((subnet_id, new_epoch));
             assignments.push(validator_id);
             SubnetAssignments::insert((subnet_id, new_epoch), assignments);
-            
-            // Emit event
+
             Self::deposit_event(RawEvent::ValidatorAssigned(validator_id, subnet_id, new_epoch));
         }
     }
