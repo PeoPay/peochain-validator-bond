@@ -60,6 +60,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .help("Timelock period in blocks")
                         .takes_value(true)
                         .required(true),
+                )
+                .arg(
+                    Arg::with_name("key")
+                        .short("k")
+                        .long("key")
+                        .value_name("FILE")
+                        .help("Path to validator key file")
+                        .takes_value(true)
+                        .required(true),
                 ),
         )
         .subcommand(
@@ -229,6 +238,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .help("Timelock period in blocks")
                         .takes_value(true)
                         .required(true),
+                )
+                .arg(
+                    Arg::with_name("key")
+                        .short("k")
+                        .long("key")
+                        .value_name("FILE")
+                        .help("Path to validator key file")
+                        .takes_value(true)
+                        .required(true),
                 ),
         )
         .get_matches();
@@ -246,8 +264,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let node_url = sub_matches.value_of("node").unwrap();
             let amount = sub_matches.value_of("amount").unwrap().parse::<Balance>()?;
             let timelock = sub_matches.value_of("timelock").unwrap().parse::<BlockNumber>()?;
-            
-            let escrow_id = ValidatorCommands::create_escrow(node_url, amount, timelock)?;
+            let key_path = sub_matches.value_of("key").unwrap();
+
+            let escrow_id = ValidatorCommands::create_escrow(
+                node_url,
+                amount,
+                timelock,
+                Path::new(key_path),
+            )?;
             println!("Escrow created with ID: {}", escrow_id);
         }
         ("register-validator", Some(sub_matches)) => {
@@ -301,13 +325,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let threshold = sub_matches.value_of("threshold").unwrap().parse::<u32>()?;
             let participants = sub_matches.value_of("participants").unwrap().parse::<u32>()?;
             let timelock = sub_matches.value_of("timelock").unwrap().parse::<BlockNumber>()?;
-            
+            let key_path = sub_matches.value_of("key").unwrap();
+
             let escrow_id = ValidatorCommands::create_threshold_escrow(
                 node_url,
                 amount,
                 threshold,
                 participants,
                 timelock,
+                Path::new(key_path),
             )?;
             println!("Threshold escrow created with ID: {}", escrow_id);
         }

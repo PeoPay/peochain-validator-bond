@@ -12,9 +12,9 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # Substrate dependencies
-sp-core = { version = '7.0.0', default-features = false }
-sp-runtime = { version = '7.0.0', default-features = false }
-frame-support = { version = '7.0.0', default-features = false }
+sp-core = { version = '9.0.0' }
+sp-runtime = { version = '9.0.0' }
+frame-support = { version = '9.0.0' }
 
 # Service-specific dependencies
 sqlx = { version = '0.7', features = ['postgres', 'runtime-tokio'] }
@@ -34,7 +34,3 @@ tokio-test = '0.4'
 [dev-dependencies.criterion]
 version = '0.5'
 features = ['html_reports']
-
-[[bench]]
-name = "subnet_repository_benchmark"
-harness = false

@@ -205,6 +205,24 @@ decl_error! {
         
         /// The bond amount is below the minimum required.
         BondTooLow,
+
+        /// The bond amount exceeds the maximum allowed.
+        BondTooHigh,
+
+        /// The provided public key is invalid.
+        InvalidPublicKey,
+
+        /// The provided escrow address is invalid.
+        InvalidEscrowAddress,
+
+        /// The escrow proof signature is invalid.
+        InvalidEscrowSignature,
+
+        /// The escrow proof has already expired.
+        EscrowProofExpired,
+
+        /// The requested timelock duration is invalid.
+        InvalidTimelockDuration,
         
         /// The performance proof is invalid.
         InvalidPerformanceProof,
@@ -437,33 +455,16 @@ impl<T: Config> Module<T> {
         proof: &ProofOfEscrow<T::AccountId, BalanceOf<T>, T::BlockNumber, T::Signature>,
         public_key: &[u8; 32],
     ) -> bool {
-        // 1. Prepare the message to verify (all relevant fields)
-        let mut message = Vec::new();
-        message.extend_from_slice(public_key);
-        message.extend_from_slice(&proof.escrow_address);
-        message.extend_from_slice(&proof.amount.encode());
-        message.extend_from_slice(&proof.timelock_height.encode());
-        message.extend_from_slice(proof.controller.encode().as_slice());
-        
-        // 2. Verify the signature using sr25519
-        // Note: This is a simplified example. In a real implementation, you would:
-        // - Use the sr25519 verification function from sp_core
-        // - Handle the signature verification result properly
-        // - Consider replay attack prevention
-        
-        // Example verification (actual implementation depends on your crypto setup):
-        let public_key = match sr25519::Public::from_slice(public_key) {
-            Ok(pk) => pk,
-            Err(_) => return false,
-        };
-        
-        // This is a placeholder - use your actual signature verification logic
-        // For example, if your proof.proof is a MultiSignature:
-        // proof.proof.verify(&message[..], &public_key)
-        
-        // For now, we'll assume the proof contains a valid signature
-        // In production, replace this with actual signature verification
-        true
+        // Prepare the message exactly as signed by the controller
+        let message = (
+            proof.escrow_address,
+            proof.amount,
+            proof.timelock_height,
+        )
+            .encode();
+
+        // Verify using the controller account contained in the proof
+        proof.proof.verify(&message[..], &proof.controller)
     }
     
     /// Verify performance proof cryptographically.

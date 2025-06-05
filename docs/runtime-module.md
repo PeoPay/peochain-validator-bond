@@ -211,6 +211,9 @@ The validator bond is held in a non-custodial escrow, which can be implemented a
 1. **2-of-2 Multisig**: Requiring signatures from both the validator and the network
 2. **Threshold Signature**: Requiring a threshold of signatures from a set of participants
 
+All escrow proofs are verified on-chain using `sr25519` signatures from the controller
+account. Invalid signatures result in the `InvalidEscrowSignature` error.
+
 ### Timelock Period
 
 Validator bonds are subject to a timelock period to prevent rapid unbonding:

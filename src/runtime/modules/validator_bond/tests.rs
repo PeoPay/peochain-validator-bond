@@ -130,6 +130,36 @@ fn bond_validator_fails_with_low_bond() {
 }
 
 #[test]
+fn bond_validator_fails_with_invalid_signature() {
+    new_test_ext().execute_with(|| {
+        let public_key = random_public_key();
+        let controller = sr25519::Pair::generate().0;
+        let escrow_address = [1u8; 32];
+
+        // Create a proof but tamper with the signature
+        let mut proof = generate_escrow_proof(
+            &controller,
+            escrow_address,
+            2000,
+            100,
+        );
+        // Corrupt signature
+        if let MultiSignature::Sr25519(ref mut sig) = proof.proof {
+            sig.0[0] ^= 0xFF;
+        }
+
+        assert_noop!(
+            ValidatorBond::bond_validator(
+                Origin::signed(controller.public()),
+                public_key,
+                proof
+            ),
+            Error::<Test>::InvalidEscrowSignature
+        );
+    });
+}
+
+#[test]
 fn submit_performance_works() {
     new_test_ext().execute_with(|| {
         // First, register a validator
