@@ -60,6 +60,7 @@ impl PeoChainApi {
         &self,
         amount: u128,
         timelock_period: u32,
+        signer_pair: sr25519::Pair,
     ) -> Result<H256, ApiError> {
         // In a real implementation, this would:
         // 1. Create a 2-of-2 multisig with the network
@@ -83,8 +84,8 @@ impl PeoChainApi {
             }
         }
         
-        // Create a signer from the default account
-        let signer = PairSigner::new(sr25519::Pair::generate().0);
+        // Use the provided signer key
+        let signer = PairSigner::new(signer_pair);
         
         // Create the call
         let call = peochain::validator_bond::CreateEscrowCall {
@@ -155,6 +156,7 @@ impl PeoChainApi {
         &self,
         public_key: [u8; 32],
         proof: ProofOfEscrow<sp_core::sr25519::Public, u128, u32, MultiSignature>,
+        signer_pair: sr25519::Pair,
     ) -> Result<H256, ApiError> {
         // In a real implementation, this would:
         // 1. Submit a transaction to register as a validator
@@ -182,8 +184,8 @@ impl PeoChainApi {
             }
         }
         
-        // Create a signer from the account that controls the escrow
-        let signer = PairSigner::new(sr25519::Pair::from_string("//Alice", None).unwrap());
+        // Use the caller supplied key to sign the transaction
+        let signer = PairSigner::new(signer_pair);
         
         // Create the call
         let call = peochain::validator_bond::BondValidatorCall {
@@ -224,6 +226,7 @@ impl PeoChainApi {
     pub async fn submit_performance(
         &self,
         proof: PerformanceProof<MultiSignature>,
+        signer_pair: sr25519::Pair,
     ) -> Result<H256, ApiError> {
         // In a real implementation, this would:
         // 1. Submit a transaction with the performance proof
@@ -247,8 +250,8 @@ impl PeoChainApi {
             }
         }
         
-        // Create a signer from the default account
-        let signer = PairSigner::new(sr25519::Pair::generate().0);
+        // Use the provided key for signing
+        let signer = PairSigner::new(signer_pair);
         
         // Create the call
         let call = peochain::validator_bond::SubmitPerformanceCall {
@@ -313,6 +316,7 @@ impl PeoChainApi {
         amount: u128,
         timelock_period: u32,
         params: ThresholdParams,
+        signer_pair: sr25519::Pair,
     ) -> Result<H256, ApiError> {
         // In a real implementation, this would:
         // 1. Create a threshold signature escrow
@@ -338,8 +342,8 @@ impl PeoChainApi {
             }
         }
         
-        // Create a signer from the default account
-        let signer = PairSigner::new(sr25519::Pair::generate().0);
+        // Use provided signer key
+        let signer = PairSigner::new(signer_pair);
         
         // Create the call
         let call = peochain::validator_bond::CreateThresholdEscrowCall {

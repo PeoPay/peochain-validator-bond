@@ -46,9 +46,15 @@ where
 
 impl CpuIntensiveTasks {
     fn verify_escrow_proof(proof: &[u8], public_key: &[u8]) -> Result<bool> {
-        // Implementation of CPU-intensive proof verification
-        // ...
-        Ok(true)
+        // Proof format: signature over (public_key) using sr25519
+        if proof.len() != 64 {
+            return Ok(false);
+        }
+
+        let signature = sr25519::Signature::from_slice(proof);
+        let pubkey = sr25519::Public::try_from(public_key)
+            .map_err(|e| anyhow!("Invalid public key: {}", e))?;
+        Ok(sp_io::crypto::sr25519_verify(&signature, public_key, &pubkey))
     }
     
     fn generate_validator_id(public_key: &[u8]) -> H256 {
@@ -423,25 +429,7 @@ where
     }
     
     fn derive_escrow_address(&self, proof: &[u8]) -> Result<AccountId> {
-        // Derive an SS58 address from the proof (which should be a signature)
-        // In a real implementation, this would use a key derivation function
-        // The message format is: b"escrow_proof:" + public_key
-        let mut message = b"escrow_proof:".to_vec();
-        message.extend_from_slice(public_key);
-        
-        // Try to parse the public key
-        let pubkey = sr25519::Public::try_from(public_key)
-            .map_err(|e| anyhow::anyhow!("Invalid public key: {}", e))?;
-            
-        // The proof should be a valid signature
-        let signature = sr25519::Signature::try_from(proof)
-            .map_err(|e| anyhow::anyhow!("Invalid signature format: {}", e))?;
-            
-        // Verify the signature
-        Ok(sp_io::crypto::sr25519_verify(
-            &signature,
-            &message,
-            &pubkey,
-        ))
+        // In this simplified example we derive an address by hashing the proof
+        Ok(AccountId::from(sp_core::hashing::blake2_256(proof)))
     }
 }

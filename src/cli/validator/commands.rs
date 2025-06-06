@@ -79,13 +79,24 @@ impl ValidatorCommands {
         node_url: &str,
         amount: Balance,
         timelock_period: BlockNumber,
+        key_path: &Path,
     ) -> Result<H256, Error> {
         // Connect to node
         let api = PeoChainApi::new(node_url).map_err(|e| Error::Api(e.to_string()))?;
 
+        // Load keypair
+        let password = prompt_password("Enter encryption password: ")?;
+        let key_data = fs::read_to_string(key_path)?;
+
+        let pair = sr25519::Pair::from_encrypted_json(
+            &key_data,
+            password.as_bytes(),
+        )
+        .map_err(|e| Error::Crypto(format!("Failed to decrypt key: {}", e)))?;
+
         // Create non-custodial 2-of-2 multisig with network
         let escrow_id = api
-            .create_non_custodial_escrow(amount, timelock_period)
+            .create_non_custodial_escrow(amount, timelock_period, pair)
             .map_err(|e| Error::Api(e.to_string()))?;
 
         println!("Created escrow with ID: {}", escrow_id);
@@ -138,7 +149,7 @@ impl ValidatorCommands {
         };
         
         let tx_hash = api
-            .register_validator(public_key, proof)
+            .register_validator(public_key, proof, pair.clone())
             .map_err(|e| Error::Api(e.to_string()))?;
 
         println!("Submitted validator registration transaction: {}", tx_hash);
@@ -192,7 +203,7 @@ impl ValidatorCommands {
 
         // Submit performance proof
         let tx_hash = api
-            .submit_performance(proof)
+            .submit_performance(proof, pair.clone())
             .map_err(|e| Error::Api(e.to_string()))?;
 
         println!("Submitted performance proof transaction: {}", tx_hash);
@@ -238,9 +249,19 @@ impl ValidatorCommands {
         threshold: u32,
         participants: u32,
         timelock_period: BlockNumber,
+        key_path: &Path,
     ) -> Result<H256, Error> {
         // Connect to node
         let api = PeoChainApi::new(node_url).map_err(|e| Error::Api(e.to_string()))?;
+
+        // Load keypair
+        let password = prompt_password("Enter encryption password: ")?;
+        let key_data = fs::read_to_string(key_path)?;
+        let pair = sr25519::Pair::from_encrypted_json(
+            &key_data,
+            password.as_bytes(),
+        )
+        .map_err(|e| Error::Crypto(format!("Failed to decrypt key: {}", e)))?;
         
         // Generate threshold parameters
         let params = ThresholdParams {
@@ -250,7 +271,7 @@ impl ValidatorCommands {
         
         // Create threshold escrow with network
         let escrow_id = api
-            .create_threshold_escrow(amount, timelock_period, params)
+            .create_threshold_escrow(amount, timelock_period, params, pair)
             .map_err(|e| Error::Api(e.to_string()))?;
         
         println!("Created threshold escrow with ID: {}", escrow_id);
